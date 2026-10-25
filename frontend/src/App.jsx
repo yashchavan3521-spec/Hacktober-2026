@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+const API_URL = (
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "")
+).replace(/\/+$/, "");
 const modelOptions = [
   { id: "gemma3", label: "Gemma 3", description: "Multimodal chat" },
   { id: "qwen2.5", label: "Qwen 2.5", description: "Reasoning & tools" },
@@ -9,7 +12,7 @@ const modelOptions = [
 async function api(path, token, options = {}) {
   const headers = new Headers(options.headers || {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_URL}${path}`, { ...options, headers });
+  const response = await fetch(apiEndpoint(path), { ...options, headers });
   if (!response.ok) {
     let message = `Request failed (${response.status})`;
     try {
@@ -21,6 +24,13 @@ async function api(path, token, options = {}) {
     throw new Error(message);
   }
   return response;
+}
+
+function apiEndpoint(path) {
+  if (!API_URL) {
+    throw new Error("Set VITE_API_URL to your deployed FastAPI backend URL.");
+  }
+  return `${API_URL}${path}`;
 }
 
 function App() {
@@ -66,7 +76,7 @@ function App() {
     event.preventDefault();
     setLoginError("");
     try {
-      const response = await fetch(`${API_URL}/auth/login`, {
+      const response = await fetch(apiEndpoint("/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
@@ -147,7 +157,7 @@ function App() {
 
   function streamChat(text, assistantId) {
     return new Promise((resolve, reject) => {
-      const socketUrl = API_URL.replace(/^http/, "ws") + "/chat";
+      const socketUrl = apiEndpoint("/chat").replace(/^http/, "ws");
       const socket = new WebSocket(socketUrl);
       let settled = false;
       socket.onopen = () => {
