@@ -62,6 +62,18 @@ npm run dev
 
 Open the Vite URL printed in the terminal (normally `http://localhost:5173`) and sign in with the credentials configured in `backend/.env`. Set `VITE_API_URL` in `frontend/.env.local` only if the local API uses a different address.
 
+## Deploy the frontend to Vercel
+
+The React frontend can be deployed to Vercel, but the current FastAPI backend cannot run there as-is. It requires an Ollama instance on the same machine, a persistent writable data directory for SQLite and Chroma, and a WebSocket connection for streamed chat. Host the backend and Ollama on a separate persistent server that supports HTTPS and WebSockets; do not expose an Ollama port publicly.
+
+1. Deploy the backend on that server and configure `SOVA_USERNAME`, `SOVA_PASSWORD`, and a unique `SOVA_JWT_SECRET` of at least 32 characters. Keep `OLLAMA_HOST` pointed at the server's loopback Ollama service, pull the configured models, and mount persistent storage for `SOVA_DATA_DIR`.
+2. Set `SOVA_CORS_ORIGINS` on the backend to the exact Vercel deployment origin (for example, `https://your-project.vercel.app`). Add the custom domain separately if you use one. Restart the backend after changing this value.
+3. Import this repository into Vercel and set the project **Root Directory** to `frontend`.
+4. Add the Vercel environment variable `VITE_API_URL` with the public HTTPS base URL of the FastAPI backend (for example, `https://api.example.com`), with no trailing slash. Set it for each environment you use, then redeploy.
+5. Open the Vercel deployment URL, sign in using the backend credentials, and verify login, document upload, Ask/Agent, exports, and streamed Chat. The backend must allow browser requests from the Vercel origin and accept secure WebSocket (`wss://`) connections.
+
+For local development, copy `frontend/.env.example` to `frontend/.env.local`; the Vite development server defaults to `http://127.0.0.1:8000` when `VITE_API_URL` is unset.
+
 ## Features and API
 
 - **Chat:** `/chat` streams Ollama responses over an authenticated WebSocket.
