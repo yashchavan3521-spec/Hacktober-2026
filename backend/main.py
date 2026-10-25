@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import ipaddress
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import chromadb
 import jwt
@@ -20,10 +22,12 @@ from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
+from dotenv import load_dotenv
 
 
 APP_DIR = Path(__file__).resolve().parent
-DATA_DIR = Path(os.getenv("SOVA_DATA_DIR", APP_DIR / "data")).resolve()
+load_dotenv(APP_DIR / ".env")
+DATA_DIR = Path(os.getenv("SOVA_DATA_DIR", APP_DIR.parent / "data")).resolve()
 UPLOAD_DIR = DATA_DIR / "uploads"
 DB_PATH = DATA_DIR / "sova.sqlite3"
 CHROMA_DIR = DATA_DIR / "chroma"
@@ -36,6 +40,16 @@ JWT_ALGORITHM = "HS256"
 JWT_TTL_MINUTES = 60 * 12
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".png", ".jpg", ".jpeg", ".webp"}
+
+ollama_hostname = urlsplit(OLLAMA_HOST).hostname
+if not ollama_hostname:
+    raise ValueError("OLLAMA_HOST must be a valid local URL")
+try:
+    ollama_is_loopback = ipaddress.ip_address(ollama_hostname).is_loopback
+except ValueError:
+    ollama_is_loopback = ollama_hostname.lower() == "localhost"
+if not ollama_is_loopback:
+    raise ValueError("SOVA only accepts a loopback Ollama host to keep model processing local")
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -129,8 +143,11 @@ def bearer_token(authorization: str | None = None) -> str:
 
 
 def validate_token(token: str) -> dict[str, Any]:
-    if not JWT_SECRET:
-        raise HTTPException(status_code=503, detail="Configure SOVA_JWT_SECRET before signing in")
+    if len(JWT_SECRET) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Configure SOVA_JWT_SECRET with at least 32 characters before signing in",
+        )
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError as exc:
@@ -148,10 +165,10 @@ def require_auth(authorization: str | None = Header(default=None)) -> dict[str, 
 def login(credentials: LoginRequest) -> dict[str, str]:
     expected_username = os.getenv("SOVA_USERNAME", "")
     expected_password = os.getenv("SOVA_PASSWORD", "")
-    if not JWT_SECRET or not expected_username or not expected_password:
+    if len(JWT_SECRET) < 32 or not expected_username or not expected_password:
         raise HTTPException(
             status_code=503,
-            detail="Configure SOVA_USERNAME, SOVA_PASSWORD, and SOVA_JWT_SECRET to enable login",
+            detail="Configure SOVA_USERNAME, SOVA_PASSWORD, and a 32-character SOVA_JWT_SECRET to enable login",
         )
     username_ok = hmac.compare_digest(credentials.username, expected_username)
     password_ok = hmac.compare_digest(credentials.password, expected_password)
@@ -293,6 +310,8 @@ def upload_document(
 
 
 def find_documents(question: str, top_k: int = 5) -> list[dict[str, Any]]:
+    if collection.count() == 0:
+        return []
     query_embedding = embed([question])[0]
     try:
         result = collection.query(
